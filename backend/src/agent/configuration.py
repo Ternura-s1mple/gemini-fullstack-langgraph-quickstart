@@ -1,6 +1,7 @@
 import os
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any, Optional, Literal
+from agent.model_adapter import MODEL_SERIES
 
 from langchain_core.runnables import RunnableConfig
 
@@ -8,22 +9,37 @@ from langchain_core.runnables import RunnableConfig
 class Configuration(BaseModel):
     """The configuration for the agent."""
 
-    query_generator_model: str = Field(
-        default="gemini-2.0-flash",
+    query_generator_model: Literal[
+        "gemini-2.0-flash",
+        "qwen-turbo",
+        "qwen-plus",
+        "qwen-max"
+    ] = Field(
+        default="gemini-2.0-flash" if MODEL_SERIES == "gemini" else "qwen-plus",
         metadata={
             "description": "The name of the language model to use for the agent's query generation."
         },
     )
 
-    reflection_model: str = Field(
-        default="gemini-2.5-flash-preview-04-17",
+    reasoning_model: Literal[
+        "gemini-2.0-flash",
+        "qwen-turbo",
+        "qwen-plus",
+        "qwen-max"
+    ] = Field(
+        default="gemini-2.0-flash" if MODEL_SERIES == "gemini" else "qwen-max",
         metadata={
-            "description": "The name of the language model to use for the agent's reflection."
+            "description": "The name of the language model to use for the agent's reasoning."
         },
     )
 
-    answer_model: str = Field(
-        default="gemini-2.5-pro-preview-05-06",
+    answer_model: Literal[
+        "gemini-2.5-pro-preview-05-06",
+        "qwen-turbo",
+        "qwen-plus",
+        "qwen-max"
+    ] = Field(
+        default="gemini-2.5-pro-preview-05-06" if MODEL_SERIES == "gemini" else "qwen-plus",
         metadata={
             "description": "The name of the language model to use for the agent's answer."
         },
@@ -31,30 +47,20 @@ class Configuration(BaseModel):
 
     number_of_initial_queries: int = Field(
         default=3,
-        metadata={"description": "The number of initial search queries to generate."},
+        metadata={
+            "description": "The number of initial search queries to generate."
+        },
     )
 
     max_research_loops: int = Field(
-        default=2,
-        metadata={"description": "The maximum number of research loops to perform."},
+        default=3,
+        metadata={
+            "description": "The maximum number of research loops to perform."
+        },
     )
 
     @classmethod
-    def from_runnable_config(
-        cls, config: Optional[RunnableConfig] = None
-    ) -> "Configuration":
+    def from_runnable_config(cls, config: dict) -> "Configuration":
         """Create a Configuration instance from a RunnableConfig."""
-        configurable = (
-            config["configurable"] if config and "configurable" in config else {}
-        )
-
-        # Get raw values from environment or config
-        raw_values: dict[str, Any] = {
-            name: os.environ.get(name.upper(), configurable.get(name))
-            for name in cls.model_fields.keys()
-        }
-
-        # Filter out None values
-        values = {k: v for k, v in raw_values.items() if v is not None}
-
-        return cls(**values)
+        configurable = config.get("configurable", {})
+        return cls(**configurable)

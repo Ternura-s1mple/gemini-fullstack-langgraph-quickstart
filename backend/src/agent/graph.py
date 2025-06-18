@@ -30,15 +30,16 @@ from agent.utils import (
     insert_citation_markers,
     resolve_urls,
 )
+from agent.model_adapter import get_model_adapter, MODEL_SERIES
 
 load_dotenv()
 
+# 初始化 Gemini 客户端用于搜索服务
 if os.getenv("GEMINI_API_KEY") is None:
     raise ValueError("GEMINI_API_KEY is not set")
 
 # Used for Google Search API
 genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
-
 
 # Nodes
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
@@ -60,24 +61,71 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
-    # init Gemini 2.0 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
+    # 创建模型适配器
+    model_adapter = get_model_adapter(configurable.query_generator_model)
+    print(f"=== 模型调试信息 ===")
+    print(f"使用的模型: {configurable.query_generator_model}")
+    print(f"模型系列: {MODEL_SERIES}")
+
+    # 初始化模型
+    llm = model_adapter.create_chat_model(
+        model_name=configurable.query_generator_model,
         temperature=1.0,
         max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
     )
-    structured_llm = llm.with_structured_output(SearchQueryList)
+    print(f"创建的LLM对象: {llm}")
+    
+    structured_llm = model_adapter.create_structured_output(llm, SearchQueryList)
+    print(f"创建的结构化输出对象: {structured_llm}")
 
-    # Format the prompt
+     # Format the prompt
     current_date = get_current_date()
     formatted_prompt = query_writer_instructions.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
+    
+    print(f"=== 发送给模型的提示词 ===")
+    print(formatted_prompt)
+    print("=== 提示词结束 ===")
+    
+    # 先测试原始模型调用
+    print("=== 测试原始模型调用 ===")
+    try:
+        raw_result = llm.invoke(formatted_prompt)
+        print(f"原始模型返回结果: {raw_result}")
+        print(f"原始结果类型: {type(raw_result)}")
+        print(f"原始结果内容: {raw_result.content if hasattr(raw_result, 'content') else raw_result}")
+    except Exception as e:
+        print(f"原始模型调用失败: {e}")
+        import traceback
+        traceback.print_exc()
+    
     # Generate the search queries
-    result = structured_llm.invoke(formatted_prompt)
+    print("=== 测试结构化输出调用 ===")
+    try:
+        result = structured_llm.invoke(formatted_prompt)
+        print("=== 结构化输出结果 ===")
+        print(f"结构化结果类型: {type(result)}")
+        print(f"结构化结果: {result}")
+        if result is not None:
+            print(f"查询列表: {result.query}")
+            print(f"理由: {result.rationale}")
+        else:
+            print("结构化结果为空!")
+    except Exception as e:
+        print(f"结构化输出调用失败: {e}")
+        import traceback
+        traceback.print_exc()
+        result = None
+    
+    print("=== 调试信息结束 ===")
+    
+    if result is None:
+        print("警告: 模型返回结果为None，使用默认查询")
+        return {"query_list": ["default search query"]}
+    
     return {"query_list": result.query}
 
 
@@ -95,7 +143,7 @@ def continue_to_web_research(state: QueryGenerationState):
 def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
-    Executes a web search using the native Google Search API tool in combination with Gemini 2.0 Flash.
+    Executes a web search using the native Google Search API tool in combination with the selected model.
 
     Args:
         state: Current graph state containing the search query and research loop count
@@ -104,22 +152,29 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     Returns:
         Dictionary with state update, including sources_gathered, research_loop_count, and web_research_results
     """
+    print("\n=== WebResearch Node Start ===")
+    print(f"Current State: {state}")
+    
     # Configure
     configurable = Configuration.from_runnable_config(config)
     formatted_prompt = web_searcher_instructions.format(
         current_date=get_current_date(),
         research_topic=state["search_query"],
     )
+    print(f"Search Query: {state['search_query']}")
 
-    # Uses the google genai client as the langchain client doesn't return grounding metadata
+    # 使用 Gemini 的搜索功能获取搜索结果
+    print("Calling Gemini Search API...")
     response = genai_client.models.generate_content(
-        model=configurable.query_generator_model,
+        model="gemini-2.0-flash",  # 固定使用 Gemini 模型进行搜索
         contents=formatted_prompt,
         config={
             "tools": [{"google_search": {}}],
             "temperature": 0,
         },
     )
+    print("Received response from Gemini Search API")
+    
     # resolve the urls to short urls for saving tokens and time
     resolved_urls = resolve_urls(
         response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
@@ -128,6 +183,9 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     citations = get_citations(response, resolved_urls)
     modified_text = insert_citation_markers(response.text, citations)
     sources_gathered = [item for citation in citations for item in citation["segments"]]
+    
+    print(f"Number of sources gathered: {len(sources_gathered)}")
+    print("=== WebResearch Node End ===\n")
 
     return {
         "sources_gathered": sources_gathered,
@@ -150,10 +208,20 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     Returns:
         Dictionary with state update, including search_query key containing the generated follow-up query
     """
+    print("\n=== Reflection Node Start ===")
+    print(f"Current State: {state}")
+    
     configurable = Configuration.from_runnable_config(config)
+    print(f"Configurable Reasoning Model (from config.py default): {configurable.reasoning_model}")
+    print(f"Reasoning Model from State (if set): {state.get('reasoning_model')}")
     # Increment the research loop count and get the reasoning model
     state["research_loop_count"] = state.get("research_loop_count", 0) + 1
     reasoning_model = state.get("reasoning_model") or configurable.reasoning_model
+    print(f"Research Loop Count: {state['research_loop_count']}")
+    print(f"Using Reasoning Model: {reasoning_model}")
+
+    # 创建模型适配器
+    model_adapter = get_model_adapter(reasoning_model)
 
     # Format the prompt
     current_date = get_current_date()
@@ -162,15 +230,19 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         research_topic=get_research_topic(state["messages"]),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
-    # init Reasoning Model
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
+    
+    # 初始化模型
+    print("Initializing model for reflection...")
+    llm = model_adapter.create_chat_model(
+        model_name=reasoning_model,
         temperature=1.0,
         max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
     )
-    result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
+    print("Generating reflection result...")
+    result = model_adapter.create_structured_output(llm, Reflection).invoke(formatted_prompt)
+    print(f"Reflection Result: {result}")
 
+    print("=== Reflection Node End ===\n")
     return {
         "is_sufficient": result.is_sufficient,
         "knowledge_gap": result.knowledge_gap,
@@ -233,6 +305,9 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     configurable = Configuration.from_runnable_config(config)
     reasoning_model = state.get("reasoning_model") or configurable.reasoning_model
 
+    # 创建模型适配器
+    model_adapter = get_model_adapter(reasoning_model)
+
     # Format the prompt
     current_date = get_current_date()
     formatted_prompt = answer_instructions.format(
@@ -241,12 +316,11 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         summaries="\n---\n\n".join(state["web_research_result"]),
     )
 
-    # init Reasoning Model, default to Gemini 2.5 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
+    # 初始化模型
+    llm = model_adapter.create_chat_model(
+        model_name=reasoning_model,
         temperature=0,
         max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
     )
     result = llm.invoke(formatted_prompt)
 
