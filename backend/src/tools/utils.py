@@ -163,4 +163,4 @@ def get_citations(response, resolved_urls_map):
                     # In a production system, you might want to log this.
                     pass
         citations.append(citation)
-    return citations
+    return citations 

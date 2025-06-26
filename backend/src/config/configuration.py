@@ -1,7 +1,7 @@
 import os
 from pydantic import BaseModel, Field
 from typing import Any, Optional, Literal
-from agent.model_adapter import MODEL_SERIES
+from models.model_adapter import MODEL_SERIES
 
 from langchain_core.runnables import RunnableConfig
 
@@ -63,4 +63,4 @@ class Configuration(BaseModel):
     def from_runnable_config(cls, config: dict) -> "Configuration":
         """Create a Configuration instance from a RunnableConfig."""
         configurable = config.get("configurable", {})
-        return cls(**configurable)
+        return cls(**configurable) 

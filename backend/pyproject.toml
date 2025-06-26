@@ -18,6 +18,21 @@ dependencies = [
     "langgraph-api",
     "fastapi",
     "google-genai",
+    # 以下为 graph_module 相关依赖
+    "hanlp==2.1.1", # graph_module
+    "PyPDF2>=3.0.0", # graph_module
+    "python-docx>=0.8.11", # graph_module
+    "chardet==3.0.4", # graph_module
+    "textract==1.6.3", # graph_module
+    "graphdatascience==1.12", # graph_module
+    "langchain_community==0.3.20", # graph_module
+    "langchain_core==0.3.46", # graph_module
+    "langchain_neo4j==0.4.0", # graph_module
+    "langchain_openai==0.3.9", # graph_module
+    "rich==13.9.4", # graph_module
+    "pandas==2.2.3", # graph_module
+    "neo4j", # graph_module
+    "pyyaml>=6.0", # graph_module
 ]
 
 
